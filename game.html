@@ -1,1 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Territory Game with Troop Slider & Double Click</title>
+<style>
+  body {
+    margin: 0; background: #111; color: #eee;
+    font-family: system-ui, sans-serif;
+    user-select: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  canvas {
+    display: block;
+    background: #222;
+    border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.6);
+    cursor: grab;
+    margin-top: 12px;
+  }
+  canvas:active {
+    cursor: grabbing;
+  }
+  #hud {
+    text-align: center;
+    margin: 6px auto 0;
+    max-width: 900px;
+    display: flex; justify-content: center; gap: 16px;
+    font-size: 14px;
+  }
+  .chip {
+    background: #333;
+    padding: 6px 12px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #eee;
+    font-weight: 600;
+  }
+  .dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+  }
+  #slider-container {
+    width: 900px;
+    max-width: 95vw;
+    margin: 8px auto 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    user-select: none;
+  }
+  #troopSlider {
+    width: 100%;
+  }
+  #sliderLabel {
+    margin-top: 4px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas" width="896" height="640"></canvas>
+<div id="hud"></div>
 
+<div id="slider-container">
+  <input type="range" id="troopSlider" min="1" max="10" value="5" />
+  <div id="sliderLabel">Send Troops: 5</div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const hud = document.getElementById('hud');
+  const slider = document.getElementById('troopSlider');
+  const sliderLabel = document.getElementById('sliderLabel');
+
+  let tileSize = 6;
+  const W = Math.floor(canvas.width / tileSize);
+  const H = Math.floor(canvas.height / tileSize);
+
+  let map = [];
+  let troops = [];
+
+  const COLORS = {
+    0: '#3399ff',  // water
+    1: '#999999',  // neutral land
+    2: '#00aaff',  // player
+    3: '#ff5555',  // bot A
+    4: '#55ff55',  // bot B
+    5: '#ffaa00'   // bot C
+  };
+
+  const entities = [
+    { id: 2, name: "You", color: COLORS[2] },
+    { id: 3, name: "Bot A", color: COLORS[3] },
+    { id: 4, name: "Bot B", color: COLORS[4] },
+    { id: 5, name: "Bot C", color: COLORS[5] }
+  ];
+
+  let boats = [];
+
+  // Zoom and pan state
+  let zoom = 1;
+  const minZoom = 0.5;
+  const maxZoom = 5;
+  let offsetX = 0;
+  let offsetY = 0;
+  let isPanning = false;
+  let panStart = null;
+
+  // Generate map and place entities
+  function generateMap() {
+    map = Array(H).fill(null).map(() => Array(W).fill(0));
+    troops = Array(H).fill(null).map(() => Array(W).fill(0));
+
+    const cx = W / 2;
+    const cy = H / 2;
+    const maxR = Math.min(W, H) / 2;
+
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const dx = x - cx;
+        const dy = y - cy;
+        const r = Math.sqrt(dx*dx + dy*dy);
+        let landChance = 0.6 - (r / maxR) * 0.35 + (Math.random() - 0.5) * 0.2;
+        map[y][x] = landChance > 0.5 ? 1 : 0; // land or water
+      }
+    }
+
+    for (let pass = 0; pass < 2; pass++) {
+      let copy = map.map(row => row.slice());
+      for (let y = 1; y < H -1; y++) {
+        for (let x = 1; x < W -1; x++) {
+          let landNeighbors = 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <=1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              if (copy[y+dy][x+dx] === 1) landNeighbors++;
+            }
+          }
+          if (copy[y][x] === 1 && landNeighbors < 3) map[y][x] = 0;
+          if (copy[y][x] === 0 && landNeighbors > 4) map[y][x] = 1;
+        }
+      }
+    }
+  }
+
+  function placeEntities() {
+    entities.forEach(ent => {
+      let placed = false;
+      let tries = 0;
+      while (!placed && tries < 10000) {
+        const x = 3 + Math.floor(Math.random() * (W-6));
+        const y = 3 + Math.floor(Math.random() * (H-6));
+        if (map[y][x] === 1) {
+          let tooClose = false;
+          for (const other of entities) {
+            if (other.id !== ent.id && other.x !== undefined) {
+              let dist = Math.hypot(other.x - x, other.y - y);
+              if (dist < Math.min(W,H)/5) {
+                tooClose = true;
+                break;
+              }
+            }
+          }
+          if (!tooClose) {
+            ent.x = x; ent.y = y;
+            map[y][x] = ent.id;
+            troops[y][x] = 10;
+            placed = true;
+          }
+        }
+        tries++;
+      }
+      if (!placed) {
+        ent.x = 3; ent.y = 3;
+        map[3][3] = ent.id;
+        troops[3][3] = 10;
+      }
+    });
+  }
+
+  // Convert screen pixel coords to tile coords, accounting for zoom & pan
+  function screenToTile(screenX, screenY) {
+    const rect = canvas.getBoundingClientRect();
+    const x = (screenX - rect.left - offsetX) / (tileSize * zoom);
+    const y = (screenY - rect.top - offsetY) / (tileSize * zoom);
+    return [Math.floor(x), Math.floor(y)];
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(zoom, zoom);
+
+    for (let y=0; y<H; y++) {
+      for (let x=0; x<W; x++) {
+        ctx.fillStyle = COLORS[map[y][x]] || '#000';
+        ctx.fillRect(x*tileSize, y*tileSize, tileSize, tileSize);
+
+        if (map[y][x] >= 2 && troops[y][x] > 0) {
+          ctx.fillStyle = "#fff";
+          ctx.font = `${tileSize}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(Math.floor(troops[y][x]), x*tileSize + tileSize/2, y*tileSize + tileSize/2);
+        }
+      }
+    }
+
+    boats.forEach(boat => {
+      const {from, to, progress, owner, troops: t} = boat;
+      const cx = (from[0] + (to[0]-from[0]) * progress) * tileSize + tileSize/2;
+      const cy = (from[1] + (to[1]-from[1]) * progress) * tileSize + tileSize/2;
+
+      ctx.fillStyle = COLORS[owner];
+      ctx.beginPath();
+      ctx.arc(cx, cy, tileSize*0.6, 0, Math.PI*2);
+      ctx.fill();
+
+      ctx.fillStyle = "#fff";
+      ctx.font = `${tileSize*0.7}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(t, cx, cy);
+    });
+
+    ctx.restore();
+  }
+
+  function sendTroops(owner, fromX, fromY, toX, toY, count) {
+    if (map[fromY][fromX] !== owner) return false;
+    if (count <= 0 || troops[fromY][fromX] <= count) return false;
+    if (map[toY][toX] === 0) return false;
+
+    troops[fromY][fromX] -= count;
+    boats.push({
+      owner,
+      from: [fromX, fromY],
+      to: [toX, toY],
+      troops: count,
+      progress: 0
+    });
+    return true;
+  }
+
+  function updateBoats(dt) {
+    const speed = 0.008 * dt;
+    for (let i=boats.length-1; i>=0; i--) {
+      let b = boats[i];
+      b.progress += speed;
+      if (b.progress >= 1) {
+        const {to, owner, troops: attacking} = b;
+        const [x,y] = to;
+        const defender = map[y][x];
+        const defenderTroops = troops[y][x];
+
+        if (defender === 0) {
+          boats.splice(i,1);
+          continue;
+        }
+
+        if (defender === 1) {
+          map[y][x] = owner;
+          troops[y][x] = attacking;
+        } else if (defender === owner) {
+          troops[y][x] += attacking;
+        } else {
+          if (attacking > defenderTroops) {
+            map[y][x] = owner;
+            troops[y][x] = attacking - defenderTroops;
+          } else {
+            troops[y][x] = defenderTroops - attacking;
+          }
+        }
+        boats.splice(i,1);
+      }
+    }
+  }
+
+  function produceTroops() {
+    for (let y=0; y<H; y++) {
+      for (let x=0; x<W; x++) {
+        if (map[y][x] >= 2) {
+          troops[y][x] = Math.min(99, troops[y][x] + 0.01);
+        }
+      }
+    }
+  }
+
+  function botAction() {
+    entities.forEach(ent => {
+      if (ent.id === 2) return;
+      let owned = [];
+      for (let y=0; y<H; y++) {
+        for (let x=0; x<W; x++) {
+          if (map[y][x] === ent.id && troops[y][x] >= 10) {
+            owned.push([x,y]);
+          }
+        }
+      }
+      if (owned.length === 0) return;
+      const idx = Math.floor(Math.random()*owned.length);
+      const [x,y] = owned[idx];
+      const neighbors = [[1,0],[-1,0],[0,1],[0,-1]]
+        .map(([dx,dy]) => [x+dx,y+dy])
+        .filter(([nx,ny]) => nx>=0 && ny>=0 && nx<W && ny<H)
+        .filter(([nx,ny]) => map[ny][nx] !== 0 && map[ny][nx] !== ent.id);
+      if (neighbors.length === 0) return;
+      const [tx, ty] = neighbors[Math.floor(Math.random()*neighbors.length)];
+      const sendCount = Math.floor(troops[y][x]/2);
+      if (sendCount > 0) {
+        sendTroops(ent.id, x, y, tx, ty, sendCount);
+      }
+    });
+  }
+
+  // Drag and pan removed - only pan with right click drag
+  let isPanning = false;
+  let panStart = null;
+
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 2) { // right click to pan
+      isPanning = true;
+      panStart = {x: e.clientX, y: e.clientY};
+      canvas.style.cursor = 'grabbing';
+    }
+  });
+  canvas.addEventListener('mousemove', (e) => {
+    if (isPanning) {
+      offsetX += e.clientX - panStart.x;
+      offsetY += e.clientY - panStart.y;
+      panStart = {x: e.clientX, y: e.clientY};
+    }
+  });
+  canvas.addEventListener('mouseup', (e) => {
+    if (isPanning && e.button === 2) {
+      isPanning = false;
+      canvas.style.cursor = 'grab';
+    }
+  });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  // Double click sends troops based on slider value
+  canvas.addEventListener('dblclick', (e) => {
+    const [x, y] = screenToTile(e.clientX, e.clientY);
+    if (!map[y] || map[y][x] !== 2) return;
+    const maxTroops = Math.floor(troops[y][x]);
+    if (maxTroops < 1) return;
+
+    // Update slider max and value to maxTroops if needed
+    if (slider.max != maxTroops) {
+      slider.max = maxTroops;
+      if (slider.value > maxTroops) slider.value = maxTroops;
+      sliderLabel.textContent = `Send Troops: ${slider.value}`;
+    }
+
+    const sendCount = Number(slider.value);
+    if (sendCount < 1 || sendCount > maxTroops) return;
+
+    const neighbors = [[1,0],[-1,0],[0,1],[0,-1]]
+      .map(([dx,dy]) => [x+dx,y+dy])
+      .filter(([nx,ny]) => nx>=0 && ny>=0 && nx<W && ny<H)
+      .filter(([nx,ny]) => map[ny][nx] !== 0 && map[ny][nx] !== 2);
+
+    if (neighbors.length === 0) return;
+
+    const [tx, ty] = neighbors[Math.floor(Math.random()*neighbors.length)];
+    sendTroops(2, x, y, tx, ty, sendCount);
+  });
+
+  // Update slider label on input
+  slider.addEventListener('input', () => {
+    sliderLabel.textContent = `Send Troops: ${slider.value}`;
+  });
+
+  // Zoom with mouse wheel and pan with right click drag
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const zoomSpeed = 0.1;
+    const oldZoom = zoom;
+    if (e.deltaY < 0) {
+      zoom = Math.min(maxZoom, zoom + zoomSpeed);
+    } else {
+      zoom = Math.max(minZoom, zoom - zoomSpeed);
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    offsetX -= (mx / oldZoom - mx / zoom);
+    offsetY -= (my / oldZoom - my / zoom);
+  }, { passive: false });
+
+  function updateHUD() {
+    hud.innerHTML = '';
+    entities.forEach(ent => {
+      let count = 0;
+      for (let y=0; y<H; y++) for(let x=0; x<W; x++) {
+        if (map[y][x] === ent.id) count++;
+      }
+      let div = document.createElement('div');
+      div.className = 'chip';
+      div.innerHTML = `<div class="dot" style="background:${ent.color}"></div>${ent.name}: ${count}`;
+      hud.appendChild(div);
+    });
+  }
+
+  let lastTime = 0;
+  function gameLoop(t) {
+    if (!lastTime) lastTime = t;
+    let dt = t - lastTime;
+    lastTime = t;
+
+    produceTroops();
+    updateBoats(dt);
+
+    if (t % 1200 < dt) {
+      botAction();
+    }
+
+    draw();
+    updateHUD();
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  function init() {
+    generateMap();
+    placeEntities();
+    boats = [];
+    lastTime = 0;
+    updateHUD();
+    requestAnimationFrame(gameLoop);
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
