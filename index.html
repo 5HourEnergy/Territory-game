@@ -1,11 +1,18 @@
 <!DOCTYPE html>
 <html>
-<head>
-    <title>Territory Game</title>
-</head>
-<body>
-    <h1>Welcome to Territory Game!</h1>
-    <p><a href="game.html">🎮 Play Territory Game</a></p>
-    <p>This is a strategic territory conquest game with bots.</p>
+<head><title>Canvas Test</title></head>
+<body style="background:#111; color:white;">
+<h1>Canvas Test</h1>
+<canvas id="test" width="400" height="400" style="border:1px solid white; background:#222;"></canvas>
+<script>
+console.log('Script starting...');
+const canvas = document.getElementById('test');
+const ctx = canvas.getContext('2d');
+ctx.fillStyle = 'red';
+ctx.fillRect(50, 50, 100, 100);
+ctx.fillStyle = 'blue';
+ctx.fillRect(200, 200, 100, 100);
+console.log('Canvas test completed - you should see red and blue squares');
+</script>
 </body>
 </html>
